@@ -1,21 +1,23 @@
 package com.botreport.botReport.service;
 
-import com.botreport.botReport.model.AssetAmountReport;
-import com.botreport.botReport.model.GeneralAmountReport;
-import com.botreport.botReport.model.LiabilityAmountReport;
-import com.botreport.botReport.model.Report;
+import com.botreport.botReport.model.*;
 import com.botreport.botReport.repository.ReportRepository;
 import com.botreport.botReport.util.ReportServiceUtil;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.BeanPropertyRowMapper;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.text.NumberFormat;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -29,6 +31,8 @@ public class ReportService {
 
     private final ReportRepository reportRepository;
     private final JavaMailSender mailSender;
+    private final JdbcTemplate jdbcTemplate;
+    private String lastToken = "LASTTOKEN";
 
     @Async
     @Scheduled(cron = "0 00 16 * * *", zone = "Africa/Nairobi")
@@ -382,6 +386,74 @@ public class ReportService {
 
         } catch (MessagingException e) {
             e.printStackTrace();
+        }
+    }
+
+    @Async
+    @Scheduled(cron = "0 00 08,12,16 * * *", zone = "Africa/Nairobi")
+    public void sendTokenInformationDetailsEmail(){
+
+        String query = "SELECT * FROM bot_services.access_token";
+        List<AccessToken> tokenList = jdbcTemplate.query(query, BeanPropertyRowMapper.newInstance(AccessToken.class));
+
+        String[] recipients = {};
+        String subject = "TOKEN INFORMATION";
+
+        if (tokenList.size() > 0) {
+
+            String dbToken = tokenList.get(0).getToken();
+
+            if(dbToken == null){
+
+                if(lastToken != null){ //Connection is lost
+
+                    boolean testConnection = testConnection("196.46.101.97",8245,5000);
+
+                    StringBuilder emailContent = new StringBuilder();
+
+                    String content = "";
+                    if(testConnection)
+                        content = "New Token from BOT is NULL. Connection is OK";
+                     else
+                        content = "New Token from BOT is NULL. Connection is LOST";
+
+                    emailContent.append(content);
+                    emailContent.append(getEmailFooter());
+                    sendEmail(recipients,subject,emailContent);
+                }
+                lastToken = dbToken;
+            } else if(lastToken == null) { //connection is restored
+
+
+                lastToken = dbToken;
+
+                StringBuilder emailContent = new StringBuilder();
+                emailContent.append(getEmailHeader());
+
+                emailContent.append("New TOKEN from BOT is fine now");
+                emailContent.append(getEmailFooter());
+                sendEmail(recipients,subject,emailContent);
+            }
+
+        }
+    }
+
+    public boolean testConnection(String host, int port, int timeout){
+        try(Socket socket = new Socket()){
+
+            socket.connect(
+                    new InetSocketAddress(host,port),
+                    timeout
+            );
+
+            return true;
+
+        } catch(IOException e){
+
+            log.info("FAIL - Cannot connect to {} : {}",host,port);
+            log.info("Reason: {}",e.getMessage());
+
+            return false;
         }
     }
 
